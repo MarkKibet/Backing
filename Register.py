@@ -1,74 +1,75 @@
 from flask import Blueprint, request, jsonify
-from werkzeug.security import generate_password_hash, check_password_hash
+from flask_sqlalchemy import SQLAlchemy
+from datetime import datetime
+import re  # For email validation
+import logging
 from Models import db
 
-# Create Blueprint
-register_bp = Blueprint('register', __name__)
+# Setup logging
+logging.basicConfig(level=logging.ERROR)
 
-# Models
+# LawFirm model
 class LawFirm(db.Model):
     __tablename__ = 'law_firms'
+
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    admin_name = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(128), nullable=False)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    name = db.Column(db.String(120), nullable=False, unique=True)
+    email = db.Column(db.String(120), nullable=False, unique=True)
+    phone = db.Column(db.String(20), nullable=False)
+    address = db.Column(db.String(255), nullable=False)
 
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-class Advocates(db.Model):
-    __tablename__ = 'advocates_login'
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(100), nullable=False)
-    law_firm_id = db.Column(db.Integer, db.ForeignKey('law_firms.id'), nullable=False)
-    password_hash = db.Column(db.String(128), nullable=False)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'email': self.email,
+            'phone': self.phone,
+            'address': self.address,
+            
+            'created_at': self.created_at.isoformat() if self.created_at else None
+        }
 
-    def set_password(self, password):
-        self.password_hash = generate_password_hash(password)
+# Register blueprint
+register_bp = Blueprint('register', __name__)
 
-
-# Law Firm Registration Route
-@register_bp.route('/register', methods=['POST'])
+# Route to register a new law firm
+@register_bp.route('/register', methods=['OPTIONS', 'POST'])
 def register_law_firm():
-    data = request.json
+    if request.method == 'OPTIONS':
+        return jsonify({}), 200  # Respond to preflight requests
 
-    # Check if email or name already exists
-    if LawFirm.query.filter_by(email=data['email']).first():
-        return jsonify({"message": "Email already exists"}), 400
+    try:
+        data = request.get_json()
 
-    # Create new Law Firm
-    law_firm = LawFirm(
-        name=data['law_firm_name'],
-        admin_name=data['admin_name'],
-        email=data['email']
-    )
-    law_firm.set_password(data['password'])
+        # Validate required fields
+        required_fields = ['name', 'email', 'phone', 'address']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'{field} is required'}), 400
 
-    db.session.add(law_firm)
-    db.session.commit()
+        # Validate email
+        email_regex = r'^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$'
+        if not re.match(email_regex, data['email']):
+            return jsonify({'error': 'Invalid email format'}), 400
 
-    return jsonify({"message": "Law Firm registered successfully!"})
+        # Check if law firm already exists
+        existing_firm = LawFirm.query.filter((LawFirm.name == data['name']) | (LawFirm.email == data['email'])).first()
+        if existing_firm:
+            return jsonify({'error': 'Law firm already exists'}), 409
 
+        # Create new law firm
+        new_firm = LawFirm(
+            name=data['name'],
+            email=data['email'],
+            phone=data['phone'],
+            address=data['address']
+        )
+        db.session.add(new_firm)
+        db.session.commit()
 
-# Advocate Login Route
-@register_bp.route('/login', methods=['POST'])
-def login():
-    data = request.json
-    law_firm_name = data['law_firm_name']
-    advocate_name = data['advocate_name']
-    password = data['password']
-
-    # Validate Law Firm and Advocate
-    law_firm = LawFirm.query.filter_by(name=law_firm_name).first()
-    if not law_firm:
-        return jsonify({"message": "Invalid Law Firm name."}), 401
-
-    advocate = Advocates.query.filter_by(name=advocate_name, law_firm_id=law_firm.id).first()
-    if not advocate or not check_password_hash(advocate.password_hash, password):
-        return jsonify({"message": "Invalid Advocate credentials."}), 401
-
-    return jsonify({"message": "Login successful!"})
-
+        return jsonify(new_firm.to_dict()), 201
+    except Exception as e:
+        logging.error(f"Error occurred: {e}")
+        return jsonify({'error': 'An internal server error occurred'}), 500

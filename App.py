@@ -24,7 +24,7 @@ def create_app():
     # Register blueprints
     app.register_blueprint(advocates_bp, url_prefix='/api/advocates')
     app.register_blueprint(cases_bp, url_prefix='/api/cases')
-    app.register_blueprint(register_bp, url_prefix='/api/register')  
+    app.register_blueprint(register_bp, url_prefix='/api')  # Fixed this!
 
     # Root route
     @app.route('/')
